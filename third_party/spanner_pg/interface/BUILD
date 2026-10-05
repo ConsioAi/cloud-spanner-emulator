@@ -491,8 +491,10 @@ cc_library(
     ],
     deps = [
         "//backend/query:function_catalog",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_googlesql//googlesql/public:function",
         "@com_google_googlesql//googlesql/public:language_options",
         "@com_google_googlesql//googlesql/public:type",
@@ -525,6 +527,7 @@ cc_test(
     name = "emulator_parser_test",
     srcs = ["emulator_parser_test.cc"],
     deps = [
+        ":emulator_builtin_function_catalog",
         ":emulator_parser",
         ":interfaces_with_stub_implementations",
         ":pg_arena_factory",
@@ -534,6 +537,7 @@ cc_test(
         "//backend/schema/graph:schema_graph",
         "//third_party/spanner_pg/shims:memory_context_pg_arena",
         "//third_party/spanner_pg/test_catalog:emulator_catalog",
+        "@com_google_absl//absl/status",
         "@com_google_googlesql//googlesql/base/testing:status_matchers",
         "@com_google_googlesql//googlesql/public:analyzer_options",
         "@com_google_googlesql//googlesql/public:catalog",

@@ -481,7 +481,7 @@ absl::Status ExecuteStreamingSql(
         if (backend::QueryEngine::MayBeChangeStreamQuery(query.sql,
                                                          txn->schema())) {
           GOOGLESQL_ASSIGN_OR_RETURN(change_stream_metadata,
-                           backend::QueryEngine::TryGetChangeStreamMetadata(
+                           txn->query_engine()->TryGetChangeStreamMetadata(
                                query, txn->schema(), in_read_write_txn));
           // if current query is a change stream query, return and exit current
           // transaction lambda to avoid nested transaction call.

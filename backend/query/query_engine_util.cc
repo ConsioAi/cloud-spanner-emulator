@@ -109,14 +109,15 @@ AnalyzePostgreSQL(const std::string& sql, googlesql::EnumerableCatalog* catalog,
   // a SQL rewrite.
   options.mutable_language()->EnableLanguageFeature(
       googlesql::FEATURE_NULLS_FIRST_LAST_IN_ORDER_BY);
+  // Only the latest schema is handed to the PG translator. The process-wide
+  // Spangres system catalog owns its own FunctionCatalog; building another one
+  // here for every statement (which loads every GoogleSQL builtin function)
+  // would be discarded immediately.
   GOOGLESQL_ASSIGN_OR_RETURN(
       std::unique_ptr<const googlesql::AnalyzerOutput> output,
       postgres_translator::spangres::ParseAndAnalyzePostgreSQL(
           sql, catalog, options, type_factory,
-          std::make_unique<FunctionCatalog>(
-              type_factory,
-              /*catalog_name=*/kCloudSpannerEmulatorFunctionCatalogName,
-              /*schema=*/function_catalog->GetLatestSchema())),
+          /*latest_schema=*/function_catalog->GetLatestSchema()),
       _.With(MapSpangresQueryErrorToSpannerError));
   return std::move(output);
 }

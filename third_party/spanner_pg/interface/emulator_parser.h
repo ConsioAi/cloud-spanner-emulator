@@ -49,6 +49,20 @@ ParseAndAnalyzePostgreSQL(
     std::unique_ptr<google::spanner::emulator::backend::FunctionCatalog>
         emulator_function_catalog);
 
+// Same as above, but only hands the engine the latest schema of the database
+// instead of a freshly built FunctionCatalog. The process-wide
+// SpangresSystemCatalog only needs the schema once it has been initialized;
+// if this call happens to be the one initializing it, a FunctionCatalog is
+// built from 'latest_schema' on the singleton's own TypeFactory. Prefer this
+// overload on the query path: constructing a FunctionCatalog loads every
+// GoogleSQL builtin function and costs several milliseconds.
+absl::StatusOr<std::unique_ptr<const googlesql::AnalyzerOutput>>
+ParseAndAnalyzePostgreSQL(
+    const std::string& sql, googlesql::EnumerableCatalog* catalog,
+    const googlesql::AnalyzerOptions& analyzer_options,
+    googlesql::TypeFactory* type_factory,
+    const google::spanner::emulator::backend::Schema* latest_schema);
+
 absl::StatusOr<interfaces::ExpressionTranslateResult>
 TranslateTableLevelExpression(
     absl::string_view expression, absl::string_view table_name,

@@ -1631,7 +1631,7 @@ bool QueryEngine::MayBeChangeStreamQuery(absl::string_view sql,
 absl::StatusOr<ChangeStreamQueryValidator::ChangeStreamMetadata>
 QueryEngine::TryGetChangeStreamMetadata(const Query& query,
                                         const Schema* schema,
-                                        bool in_read_write_txn) {
+                                        bool in_read_write_txn) const {
   const absl::Time start_time = absl::Now();
   Query local_query;
   NormalizeParameterNames(schema, query, &local_query);
@@ -1639,19 +1639,22 @@ QueryEngine::TryGetChangeStreamMetadata(const Query& query,
                    MakeAnalyzerOptionsWithParameters(
                        local_query.declared_params, GetTimeZone(schema)));
   analyzer_options.set_prune_unused_columns(true);
-  googlesql::TypeFactory type_factory;
-  FunctionCatalog function_catalog(
-      &type_factory, kCloudSpannerEmulatorFunctionCatalogName, schema);
-  Catalog catalog{schema, &function_catalog, &type_factory, analyzer_options};
+  // Reuse the engine's type factory and function catalog. Building a
+  // FunctionCatalog here (as this function used to do, on a stack-local type
+  // factory) costs several milliseconds per call, and the first such catalog
+  // in the process was captured by the Spangres system catalog singleton with
+  // types owned by the stack-local factory.
+  Catalog catalog{schema, &function_catalog_, type_factory_, analyzer_options};
   std::unique_ptr<const googlesql::AnalyzerOutput> analyzer_output;
   if (schema->dialect() == database_api::DatabaseDialect::POSTGRESQL) {
     GOOGLESQL_ASSIGN_OR_RETURN(
         analyzer_output,
         AnalyzePostgreSQL(local_query.sql, &catalog, analyzer_options,
-                          &type_factory, &function_catalog));
+                          type_factory_, &function_catalog_));
   } else {
-    GOOGLESQL_ASSIGN_OR_RETURN(analyzer_output, Analyze(local_query.sql, &catalog,
-                                              analyzer_options, &type_factory));
+    GOOGLESQL_ASSIGN_OR_RETURN(analyzer_output,
+                     Analyze(local_query.sql, &catalog, analyzer_options,
+                             type_factory_));
   }
 
   GOOGLESQL_ASSIGN_OR_RETURN(auto params,

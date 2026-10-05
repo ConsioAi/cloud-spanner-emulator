@@ -50,27 +50,48 @@ using ::postgres_translator::interfaces::ParserOutput;
 using ::postgres_translator::interfaces::SpangresTranslatorFactory;
 using ::postgres_translator::interfaces::TranslateParsedQueryParamsBuilder;
 
+namespace {
+
+absl::StatusOr<std::unique_ptr<const googlesql::AnalyzerOutput>>
+ParseAndAnalyzePostgreSQLImpl(
+    const std::string& sql, googlesql::EnumerableCatalog* catalog,
+    const googlesql::AnalyzerOptions& analyzer_options,
+    googlesql::TypeFactory* type_factory,
+    std::unique_ptr<EmulatorBuiltinFunctionCatalog> builtin_function_catalog) {
+  GOOGLESQL_ASSIGN_OR_RETURN(ParserOutput parser_output,
+                   CheckedPgRawParserFullOutput(sql.c_str()));
+
+  return SpangresTranslatorFactory::Create()->TranslateParsedQuery(
+      TranslateParsedQueryParamsBuilder(std::move(parser_output), sql, catalog,
+                                        std::move(builtin_function_catalog))
+          .SetAnalyzerOptions(analyzer_options)
+          .SetTypeFactory(type_factory)
+          .Build());
+}
+
+}  // namespace
+
 absl::StatusOr<std::unique_ptr<const googlesql::AnalyzerOutput>>
 ParseAndAnalyzePostgreSQL(
     const std::string& sql, googlesql::EnumerableCatalog* catalog,
     const googlesql::AnalyzerOptions& analyzer_options,
     googlesql::TypeFactory* type_factory,
     std::unique_ptr<FunctionCatalog> emulator_function_catalog) {
-  using postgres_translator::interfaces::ParserOutput;
-  using postgres_translator::interfaces::SpangresTranslatorFactory;
-  using postgres_translator::interfaces::TranslateParsedQueryParamsBuilder;
+  return ParseAndAnalyzePostgreSQLImpl(
+      sql, catalog, analyzer_options, type_factory,
+      std::make_unique<EmulatorBuiltinFunctionCatalog>(
+          std::move(emulator_function_catalog)));
+}
 
-  GOOGLESQL_ASSIGN_OR_RETURN(ParserOutput parser_output,
-                   CheckedPgRawParserFullOutput(sql.c_str()));
-
-  return SpangresTranslatorFactory::Create()->TranslateParsedQuery(
-      TranslateParsedQueryParamsBuilder(
-          std::move(parser_output), sql, catalog,
-          std::make_unique<EmulatorBuiltinFunctionCatalog>(
-              std::move(emulator_function_catalog)))
-          .SetAnalyzerOptions(analyzer_options)
-          .SetTypeFactory(type_factory)
-          .Build());
+absl::StatusOr<std::unique_ptr<const googlesql::AnalyzerOutput>>
+ParseAndAnalyzePostgreSQL(
+    const std::string& sql, googlesql::EnumerableCatalog* catalog,
+    const googlesql::AnalyzerOptions& analyzer_options,
+    googlesql::TypeFactory* type_factory,
+    const google::spanner::emulator::backend::Schema* latest_schema) {
+  return ParseAndAnalyzePostgreSQLImpl(
+      sql, catalog, analyzer_options, type_factory,
+      std::make_unique<EmulatorBuiltinFunctionCatalog>(latest_schema));
 }
 
 absl::StatusOr<interfaces::ExpressionTranslateResult>

@@ -44,6 +44,8 @@
 #include "backend/schema/catalog/proto_bundle.h"
 #include "backend/schema/catalog/schema.h"
 #include "backend/schema/graph/schema_graph.h"
+#include "absl/status/status.h"
+#include "third_party/spanner_pg/interface/emulator_builtin_function_catalog.h"
 #include "third_party/spanner_pg/interface/pg_arena.h"
 #include "third_party/spanner_pg/interface/spangres_translator_interface.h"
 #include "third_party/spanner_pg/shims/memory_context_pg_arena.h"
@@ -99,6 +101,57 @@ TEST_F(PGEmulatorParserTest, ParseAndAnalyzePostgreSQL) {
           std::make_unique<FunctionCatalog>(
               type_factory_.get(), kCloudSpannerEmulatorFunctionCatalogName,
               schema_.get())));
+}
+
+TEST_F(PGEmulatorParserTest, ParseAndAnalyzePostgreSQLWithSchemaOnly) {
+  std::unique_ptr<googlesql::EnumerableCatalog> catalog =
+      test::GetEmulatorCatalog();
+  // The schema-only overload must work both when it initializes the
+  // process-wide system catalog and when the singleton already exists, so call
+  // it twice.
+  for (int i = 0; i < 2; ++i) {
+    GOOGLESQL_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<const googlesql::AnalyzerOutput> output,
+        ParseAndAnalyzePostgreSQL("select 1234567890123", catalog.get(),
+                                  analyzer_options_, type_factory_.get(),
+                                  /*latest_schema=*/schema_.get()));
+    ASSERT_NE(output->resolved_statement(), nullptr);
+  }
+  // Builtin functions still resolve through the singleton's own catalog.
+  GOOGLESQL_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<const googlesql::AnalyzerOutput> output,
+      ParseAndAnalyzePostgreSQL("select abs(-1)", catalog.get(),
+                                analyzer_options_, type_factory_.get(),
+                                /*latest_schema=*/schema_.get()));
+  ASSERT_NE(output->resolved_statement(), nullptr);
+}
+
+TEST_F(PGEmulatorParserTest, SchemaCarrierBuiltinFunctionCatalog) {
+  EmulatorBuiltinFunctionCatalog carrier(schema_.get());
+  EXPECT_FALSE(carrier.has_function_catalog());
+  EXPECT_EQ(carrier.GetLatestSchema(), schema_.get());
+  EXPECT_THAT(carrier.GetFunction("abs"),
+              googlesql_base::testing::StatusIs(absl::StatusCode::kNotFound));
+
+  Schema other_schema(
+      google::spanner::emulator::backend::SchemaGraph::CreateEmpty(),
+      google::spanner::emulator::backend::ProtoBundle::CreateEmpty(),
+      google::spanner::emulator::backend::database_api::DatabaseDialect::
+          POSTGRESQL,
+      /*database_id=*/"other_db");
+  carrier.SetLatestSchema(&other_schema);
+  EXPECT_EQ(carrier.GetLatestSchema(), &other_schema);
+}
+
+TEST_F(PGEmulatorParserTest, OwnedBuiltinFunctionCatalog) {
+  std::unique_ptr<EmulatorBuiltinFunctionCatalog> owned =
+      EmulatorBuiltinFunctionCatalog::CreateWithOwnedFunctionCatalog(
+          schema_.get());
+  EXPECT_TRUE(owned->has_function_catalog());
+  EXPECT_EQ(owned->GetLatestSchema(), schema_.get());
+  GOOGLESQL_ASSERT_OK_AND_ASSIGN(const googlesql::Function* abs,
+                                 owned->GetFunction("abs"));
+  EXPECT_NE(abs, nullptr);
 }
 
 TEST_F(PGEmulatorParserTest, TranslateTableLevelExpression) {

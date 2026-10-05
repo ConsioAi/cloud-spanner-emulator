@@ -151,6 +151,21 @@ absl::StatusOr<bool> SpangresSystemCatalog::TryInitializeEngineSystemCatalog(
     return false;
   }
 
+  // The singleton lives for the rest of the process and resolves builtin
+  // functions through this catalog, so it needs a full FunctionCatalog whose
+  // types outlive any caller. Callers on the query path only pass a
+  // schema-carrier wrapper (see EmulatorBuiltinFunctionCatalog); build the
+  // full catalog from the schema it carries.
+  {
+    auto* emulator_catalog = static_cast<EmulatorBuiltinFunctionCatalog*>(
+        builtin_function_catalog.get());
+    if (!emulator_catalog->has_function_catalog()) {
+      builtin_function_catalog =
+          EmulatorBuiltinFunctionCatalog::CreateWithOwnedFunctionCatalog(
+              emulator_catalog->GetLatestSchema());
+    }
+  }
+
   // Create and setup a new catalog. If setup is successful, set the
   // EngineSystemCatalog singleton to the new catalog. Otherwise, delete the
   // old catalog and return an error.
