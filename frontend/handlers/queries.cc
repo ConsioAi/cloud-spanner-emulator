@@ -475,13 +475,19 @@ absl::Status ExecuteStreamingSql(
                 txn->schema()->proto_bundle(),
                 request->request_options().client_context().secure_context()));
         bool in_read_write_txn = txn->IsReadWrite() || txn->IsPartitionedDml();
-        GOOGLESQL_ASSIGN_OR_RETURN(change_stream_metadata,
-                         backend::QueryEngine::TryGetChangeStreamMetadata(
-                             query, txn->schema(), in_read_write_txn));
-        // if current query is a change stream query, return and exit current
-        // transaction lambda to avoid nested transaction call.
-        if (change_stream_metadata.is_change_stream_query) {
-          return absl::OkStatus();
+        // TryGetChangeStreamMetadata fully analyzes the statement, which costs
+        // as much as executing it. Only pay that when the SQL can actually
+        // reference one of the schema's change stream TVFs.
+        if (backend::QueryEngine::MayBeChangeStreamQuery(query.sql,
+                                                         txn->schema())) {
+          GOOGLESQL_ASSIGN_OR_RETURN(change_stream_metadata,
+                           backend::QueryEngine::TryGetChangeStreamMetadata(
+                               query, txn->schema(), in_read_write_txn));
+          // if current query is a change stream query, return and exit current
+          // transaction lambda to avoid nested transaction call.
+          if (change_stream_metadata.is_change_stream_query) {
+            return absl::OkStatus();
+          }
         }
         auto maybe_result = txn->ExecuteSql(query, request->query_mode());
         if (!maybe_result.ok()) {

@@ -36,6 +36,7 @@
 #include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
@@ -2325,6 +2326,44 @@ TEST_P(QueryEngineTest, InsertOnConflictDoUpdateNamedSchema) {
                     QueryContext{schema.get(), &reader, &writer}),
                 IsOkAndHolds(Field(&QueryResult::modified_row_count, 1)));
   }
+}
+
+TEST_P(QueryEngineTest, MayBeChangeStreamQuery) {
+  // A schema without change streams can never be the target of a change
+  // stream query, whatever the SQL says.
+  EXPECT_FALSE(QueryEngine::MayBeChangeStreamQuery(
+      "SELECT * FROM READ_change_stream_test_table('2020-01-01', NULL, NULL, "
+      "1000)",
+      schema()));
+  EXPECT_FALSE(QueryEngine::MayBeChangeStreamQuery(
+      "SELECT * FROM spanner.read_json_change_stream_test_table("
+      "'2020-01-01'::timestamptz, NULL, NULL, 1000, NULL)",
+      schema()));
+
+  // Ordinary statements against a schema with change streams.
+  EXPECT_FALSE(QueryEngine::MayBeChangeStreamQuery("SELECT 1",
+                                                   change_stream_schema()));
+  EXPECT_FALSE(QueryEngine::MayBeChangeStreamQuery(
+      "SELECT int64_col FROM test_table WHERE string_col = 'change_stream'",
+      change_stream_schema()));
+  EXPECT_FALSE(QueryEngine::MayBeChangeStreamQuery(
+      "INSERT INTO test_table (int64_col, string_col) VALUES (1, 'a')",
+      change_stream_schema()));
+
+  // Statements naming the change stream TVF, in any case.
+  std::string tvf_query = GetParam() == POSTGRESQL
+                              ? "SELECT * FROM "
+                                "spanner.read_json_change_stream_test_table("
+                                "'2020-01-01'::timestamptz, NULL::timestamptz, "
+                                "NULL::text, 1000, NULL::text[])"
+                              : "SELECT * FROM READ_change_stream_test_table("
+                                "'2020-01-01', NULL, NULL, 1000)";
+  EXPECT_TRUE(QueryEngine::MayBeChangeStreamQuery(tvf_query,
+                                                  change_stream_schema()));
+  EXPECT_TRUE(QueryEngine::MayBeChangeStreamQuery(
+      absl::AsciiStrToUpper(tvf_query), change_stream_schema()));
+  EXPECT_TRUE(QueryEngine::MayBeChangeStreamQuery(
+      absl::AsciiStrToLower(tvf_query), change_stream_schema()));
 }
 
 TEST_P(QueryEngineTest, TestGetValidChangeStreamMetadataFromChangeStreamQuery) {

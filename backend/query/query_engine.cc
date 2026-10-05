@@ -56,6 +56,7 @@
 #include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/ascii.h"
 #include "absl/strings/cord.h"
 #include "absl/strings/match.h"
 #include "absl/strings/substitute.h"
@@ -1608,6 +1609,23 @@ absl::Status QueryEngine::IsValidPartitionedDML(
 bool IsDMLQuery(const std::string& query) {
   googlesql::ResolvedNodeKind query_kind = googlesql::GetStatementKind(query);
   return IsDMLStmt(query_kind);
+}
+
+bool QueryEngine::MayBeChangeStreamQuery(absl::string_view sql,
+                                         const Schema* schema) {
+  if (schema == nullptr || schema->change_streams().empty()) {
+    return false;
+  }
+  // TVF names are case-insensitive in GoogleSQL and are folded to lower case
+  // by the PostgreSQL parser unless quoted, so compare in lower case.
+  const std::string lower_sql = absl::AsciiStrToLower(sql);
+  for (const ChangeStream* change_stream : schema->change_streams()) {
+    if (absl::StrContains(lower_sql,
+                          absl::AsciiStrToLower(change_stream->tvf_name()))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 absl::StatusOr<ChangeStreamQueryValidator::ChangeStreamMetadata>

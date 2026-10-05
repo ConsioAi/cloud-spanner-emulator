@@ -31,6 +31,7 @@
 #include "absl/memory/memory.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
 #include "backend/query/catalog.h"
 #include "backend/query/change_stream/change_stream_query_validator.h"
 #include "backend/query/function_catalog.h"
@@ -129,6 +130,19 @@ class QueryEngine {
   // partitioned DML.
   absl::Status IsValidPartitionedDML(const Query& query,
                                      const QueryContext& context) const;
+
+  // Cheap textual pre-check for TryGetChangeStreamMetadata. Returns true if
+  // 'sql' may be a change stream query against 'schema', i.e. the schema has
+  // change streams and 'sql' contains the TVF name of one of them (compared
+  // case-insensitively). A change stream query must name the TVF of the change
+  // stream it reads, so a false result is definitive; a true result only means
+  // the full analysis in TryGetChangeStreamMetadata is required to decide.
+  //
+  // This exists because TryGetChangeStreamMetadata performs a complete analysis
+  // of the statement, which is as expensive as executing it, and the vast
+  // majority of statements are not change stream queries.
+  static bool MayBeChangeStreamQuery(absl::string_view sql,
+                                     const Schema* schema);
 
   // Returns an empty change stream metadata if current query is a valid regular
   // query. Returns the complete change stream metadata if current query is a
