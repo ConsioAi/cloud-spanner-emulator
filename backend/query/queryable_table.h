@@ -44,11 +44,19 @@ class QueryableTable : public googlesql::Table {
  public:
   // 'options' , 'catalog' , 'type_factory' must be non-null when specifying a
   // QueryableTable with default value columns.
+  //
+  // When 'lazy_expressions' is false, the default and generated expressions of
+  // the columns are analyzed here (and a failure crashes, as those expressions
+  // were validated when the schema was created). When it is true they are
+  // analyzed on first use through googlesql::Column::GetExpression(), which
+  // the analyzer only calls while resolving DML against this table; 'catalog'
+  // and 'type_factory' must then outlive the table.
   QueryableTable(
       const backend::Table* table, RowReader* reader,
       std::optional<const googlesql::AnalyzerOptions> options = std::nullopt,
       googlesql::Catalog* catalog = nullptr,
-      googlesql::TypeFactory* type_factory = nullptr, bool is_synonym = false);
+      googlesql::TypeFactory* type_factory = nullptr, bool is_synonym = false,
+      bool lazy_expressions = false);
 
   std::string Name() const override {
     return std::string(SDLObjectName::GetInSchemaName(SynonymOrName()));
@@ -80,12 +88,6 @@ class QueryableTable : public googlesql::Table {
       absl::Span<const int> column_idxs) const override;
 
  private:
-  absl::StatusOr<std::unique_ptr<const googlesql::AnalyzerOutput>>
-  AnalyzeColumnExpression(
-      const Column* column, googlesql::TypeFactory* type_factory,
-      googlesql::Catalog* catalog,
-      std::optional<const googlesql::AnalyzerOptions> opt_options) const;
-
   // Whether the table should be treated as a synonym.
   bool is_synonym_;
 

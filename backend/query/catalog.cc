@@ -205,7 +205,8 @@ Catalog::Catalog(
     QueryEvaluator* query_evaluator,
     std::optional<std::string> change_stream_internal_lookup,
     const absl::flat_hash_map<std::string, google::protobuf::Value>&
-        secure_context)
+        secure_context,
+    bool lazy_column_expressions)
     : schema_(schema),
       function_catalog_(function_catalog),
       type_factory_(type_factory),
@@ -265,11 +266,13 @@ Catalog::Catalog(
       absl::Status status = AddObjectToNamedSchema(
           std::string(SDLObjectName::GetSchemaName(name)),
           std::make_unique<QueryableTable>(table, reader, options, this,
-                                           type_factory));
+                                           type_factory, /*is_synonym=*/false,
+                                           lazy_column_expressions));
       LOG_IF(ERROR, !status.ok()) << status.message();
     } else {
       tables_[table->Name()] = std::make_unique<QueryableTable>(
-          table, reader, options, this, type_factory);
+          table, reader, options, this, type_factory, /*is_synonym=*/false,
+          lazy_column_expressions);
     }
 
     std::string synonym_name = table->synonym();
@@ -279,11 +282,13 @@ Catalog::Catalog(
             std::string(SDLObjectName::GetSchemaName(synonym_name)),
             std::make_unique<QueryableTable>(table, reader, options, this,
                                              type_factory,
-                                             /*is_synonym=*/true));
+                                             /*is_synonym=*/true,
+                                             lazy_column_expressions));
         LOG_IF(ERROR, !status.ok()) << status.message();
       } else {
         tables_[synonym_name] = std::make_unique<QueryableTable>(
-            table, reader, options, this, type_factory, /*is_synonym=*/true);
+            table, reader, options, this, type_factory, /*is_synonym=*/true,
+            lazy_column_expressions);
       }
     }
   }
@@ -348,9 +353,11 @@ Catalog::Catalog(
     auto partition_table = change_stream->change_stream_partition_table();
     auto data_table = change_stream->change_stream_data_table();
     tables_[partition_table->Name()] = std::make_unique<QueryableTable>(
-        partition_table, reader, options, this, type_factory);
+        partition_table, reader, options, this, type_factory,
+        /*is_synonym=*/false, lazy_column_expressions);
     tables_[data_table->Name()] = std::make_unique<QueryableTable>(
-        data_table, reader, options, this, type_factory);
+        data_table, reader, options, this, type_factory,
+        /*is_synonym=*/false, lazy_column_expressions);
   }
   // Register a table valued function for each active change stream
   for (const auto* change_stream : schema->change_streams()) {

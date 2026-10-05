@@ -1174,7 +1174,10 @@ absl::StatusOr<std::string> QueryEngine::GetDmlTargetTable(
                        normalized_query.declared_params,
                        GetTimeZone(function_catalog_.GetLatestSchema())));
   analyzer_options.set_prune_unused_columns(true);
-  Catalog catalog(schema, &function_catalog_, type_factory_, analyzer_options);
+  Catalog catalog(schema, &function_catalog_, type_factory_, analyzer_options,
+                  /*reader=*/nullptr, /*query_evaluator=*/nullptr,
+                  /*change_stream_internal_lookup=*/std::nullopt,
+                  /*secure_context=*/{}, /*lazy_column_expressions=*/true);
   GOOGLESQL_ASSIGN_OR_RETURN(
       auto analyzer_output,
       Analyze(normalized_query.sql, &catalog, analyzer_options, type_factory_));
@@ -1379,7 +1382,7 @@ absl::StatusOr<QueryResult> QueryEngine::ExecuteSql(
       context.schema, &function_catalog_, type_factory_, analyzer_options,
       context.reader, &view_evaluator,
       normalized_query.change_stream_internal_lookup,
-      normalized_query.secure_context);
+      normalized_query.secure_context, /*lazy_column_expressions=*/true);
 
   std::unique_ptr<const googlesql::AnalyzerOutput> analyzer_output;
   if (context.schema->dialect() == database_api::DatabaseDialect::POSTGRESQL &&
@@ -1399,7 +1402,8 @@ absl::StatusOr<QueryResult> QueryEngine::ExecuteSql(
       catalog = std::make_unique<Catalog>(
           context.schema, &function_catalog_, type_factory_, analyzer_options,
           context.reader, &view_evaluator,
-          normalized_query.change_stream_internal_lookup);
+          normalized_query.change_stream_internal_lookup,
+          /*secure_context=*/{}, /*lazy_column_expressions=*/true);
       GOOGLESQL_ASSIGN_OR_RETURN(analyzer_output,
                        Analyze(normalized_query.sql, catalog.get(),
                                analyzer_options, type_factory_));
@@ -1542,8 +1546,15 @@ absl::Status QueryEngine::IsPartitionable(const Query& query,
                        local_query.declared_params,
                        GetTimeZone(function_catalog_.GetLatestSchema())));
   analyzer_options.set_prune_unused_columns(true);
-  Catalog catalog{context.schema, &function_catalog_, type_factory_,
-                  analyzer_options};
+  Catalog catalog{context.schema,
+                  &function_catalog_,
+                  type_factory_,
+                  analyzer_options,
+                  /*reader=*/nullptr,
+                  /*query_evaluator=*/nullptr,
+                  /*change_stream_internal_lookup=*/std::nullopt,
+                  /*secure_context=*/{},
+                  /*lazy_column_expressions=*/true};
 
   std::unique_ptr<const googlesql::AnalyzerOutput> analyzer_output;
   if (context.schema->dialect() == database_api::DatabaseDialect::POSTGRESQL) {
@@ -1583,8 +1594,15 @@ absl::Status QueryEngine::IsValidPartitionedDML(
                        local_query.declared_params,
                        GetTimeZone(function_catalog_.GetLatestSchema())));
   analyzer_options.set_prune_unused_columns(true);
-  Catalog catalog{context.schema, &function_catalog_, type_factory_,
-                  analyzer_options};
+  Catalog catalog{context.schema,
+                  &function_catalog_,
+                  type_factory_,
+                  analyzer_options,
+                  /*reader=*/nullptr,
+                  /*query_evaluator=*/nullptr,
+                  /*change_stream_internal_lookup=*/std::nullopt,
+                  /*secure_context=*/{},
+                  /*lazy_column_expressions=*/true};
   std::unique_ptr<const googlesql::AnalyzerOutput> analyzer_output;
   if (context.schema->dialect() == database_api::DatabaseDialect::POSTGRESQL) {
     GOOGLESQL_ASSIGN_OR_RETURN(
@@ -1644,7 +1662,15 @@ QueryEngine::TryGetChangeStreamMetadata(const Query& query,
   // factory) costs several milliseconds per call, and the first such catalog
   // in the process was captured by the Spangres system catalog singleton with
   // types owned by the stack-local factory.
-  Catalog catalog{schema, &function_catalog_, type_factory_, analyzer_options};
+  Catalog catalog{schema,
+                  &function_catalog_,
+                  type_factory_,
+                  analyzer_options,
+                  /*reader=*/nullptr,
+                  /*query_evaluator=*/nullptr,
+                  /*change_stream_internal_lookup=*/std::nullopt,
+                  /*secure_context=*/{},
+                  /*lazy_column_expressions=*/true};
   std::unique_ptr<const googlesql::AnalyzerOutput> analyzer_output;
   if (schema->dialect() == database_api::DatabaseDialect::POSTGRESQL) {
     GOOGLESQL_ASSIGN_OR_RETURN(

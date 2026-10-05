@@ -64,6 +64,13 @@ class Catalog : public googlesql::EnumerableCatalog {
  public:
   // 'reader' can be nullptr unless CreateEvaluatorTableIterator is called
   // on tables in the catalog.
+  //
+  // 'lazy_column_expressions' defers the analysis of column default and
+  // generated expressions until the analyzer asks for them (see
+  // QueryableTable). Query-path catalogs, built once per statement, should
+  // pass true; catalogs built while validating or applying a schema change
+  // should keep the eager default so that an invalid expression is caught
+  // there.
   Catalog(
       const Schema* schema, const FunctionCatalog* function_catalog,
       googlesql::TypeFactory* type_factory,
@@ -73,7 +80,8 @@ class Catalog : public googlesql::EnumerableCatalog {
       RowReader* reader = nullptr, QueryEvaluator* query_evaluator = nullptr,
       std::optional<std::string> change_stream_internal_lookup = std::nullopt,
       const absl::flat_hash_map<std::string, google::protobuf::Value>&
-          secure_context = {});
+          secure_context = {},
+      bool lazy_column_expressions = false);
 
   std::string FullName() const override {
     // The name of the root catalog is "".

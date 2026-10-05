@@ -105,73 +105,36 @@ class RowCursorEvaluatorTableIterator
   std::vector<googlesql::Value> values_;
 };
 
-absl::StatusOr<std::unique_ptr<const googlesql::AnalyzerOutput>>
-QueryableTable::AnalyzeColumnExpression(
-    const Column* column, googlesql::TypeFactory* type_factory,
-    googlesql::Catalog* catalog,
-    std::optional<const googlesql::AnalyzerOptions> opt_options) const {
-  std::unique_ptr<const googlesql::AnalyzerOutput> output = nullptr;
-  bool enable_generated_pk =
-      EmulatorFeatureFlags::instance().flags().enable_generated_pk;
-  bool is_generated_column = enable_generated_pk && column->is_generated();
-  if (opt_options.has_value() &&
-      (column->has_default_value() || (is_generated_column))) {
-    googlesql::AnalyzerOptions options = opt_options.value();
-    if (is_generated_column) {
-      for (const Column* dep : column->dependent_columns()) {
-        GOOGLESQL_RETURN_IF_ERROR(
-            options.AddExpressionColumn(dep->Name(), dep->GetType()))
-            << "Failed to add dependent column " << dep->Name()
-            << " for generated column : " << column->FullName();
-      }
-    }
-    std::string expression_type = "default";
-    if (is_generated_column) {
-      expression_type = "generated";
-    }
-    GOOGLESQL_RETURN_IF_ERROR(googlesql::AnalyzeExpressionForAssignmentToType(
-        column->expression().value(), options, catalog, type_factory,
-        column->GetType(), &output))
-        << "Failed to analyze " << expression_type << " expression for column "
-        << column->FullName();
-  }
-  return std::move(output);
-}
-
 QueryableTable::QueryableTable(
     const backend::Table* table, RowReader* reader,
     std::optional<const googlesql::AnalyzerOptions> opt_options,
     googlesql::Catalog* catalog, googlesql::TypeFactory* type_factory,
-    bool is_synonym)
+    bool is_synonym, bool lazy_expressions)
     : is_synonym_(is_synonym), wrapped_table_(table), reader_(reader) {
   bool enable_generated_pk =
       EmulatorFeatureFlags::instance().flags().enable_generated_pk;
+  // One copy of the analyzer options, shared by all expression columns of the
+  // table. Callers may pass a temporary, so the options cannot be referenced.
+  std::shared_ptr<const googlesql::AnalyzerOptions> shared_options;
   for (const auto* column : table->columns()) {
-    absl::StatusOr<std::unique_ptr<const googlesql::AnalyzerOutput>>
-        analyzer_output =
-            AnalyzeColumnExpression(column, type_factory, catalog, opt_options);
-    ABSL_CHECK_OK(analyzer_output.status());  // Crash OK
-    std::unique_ptr<const googlesql::AnalyzerOutput> output =
-        std::move(analyzer_output.value());
     bool is_generated_column = enable_generated_pk && column->is_generated();
-    if (column->has_default_value() || (is_generated_column)) {
-      googlesql::Column::ExpressionAttributes::ExpressionKind expression_kind =
-          googlesql::Column::ExpressionAttributes::ExpressionKind::DEFAULT;
-      if (is_generated_column) {
-        expression_kind =
-            googlesql::Column::ExpressionAttributes::ExpressionKind::GENERATED;
-      }
-      googlesql::Column::ExpressionAttributes expression_attributes =
-          googlesql::Column::ExpressionAttributes(expression_kind,
-                                                  column->expression().value(),
-                                                  output->resolved_expr());
-      columns_.push_back(std::make_unique<const QueryableColumn>(
-          column, std::move(output),
-          std::make_optional(expression_attributes)));
-    } else {
-      columns_.push_back(std::make_unique<const QueryableColumn>(
-          column, std::move(output), std::nullopt));
+    bool has_expression = column->has_default_value() || is_generated_column;
+    if (!has_expression || !opt_options.has_value()) {
+      columns_.push_back(std::make_unique<const QueryableColumn>(column));
+      continue;
     }
+    if (shared_options == nullptr) {
+      shared_options = std::make_shared<const googlesql::AnalyzerOptions>(
+          opt_options.value());
+    }
+    auto queryable_column = std::make_unique<const QueryableColumn>(
+        column, shared_options, catalog, type_factory);
+    if (!lazy_expressions) {
+      // Analyze now. This keeps the eager behavior (and its crash on an
+      // invalid expression) for catalogs built outside the query path.
+      queryable_column->GetExpression();
+    }
+    columns_.push_back(std::move(queryable_column));
   }
 
   // Populate primary_key_column_indexes_.

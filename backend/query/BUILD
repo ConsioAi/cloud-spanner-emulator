@@ -671,13 +671,20 @@ cc_test(
 cc_library(
     name = "queryable_column",
     srcs = [
+        "queryable_column.cc",
     ],
     hdrs = [
         "queryable_column.h",
     ],
     deps = [
         "//backend/schema/catalog:schema",
+        "//common:feature_flags",
+        "@com_google_absl//absl/base",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
+        "@com_google_googlesql//googlesql/public:analyzer",
+        "@com_google_googlesql//googlesql/public:analyzer_options",
         "@com_google_googlesql//googlesql/public:analyzer_output",
         "@com_google_googlesql//googlesql/public:catalog",
         "@com_google_googlesql//googlesql/public:type",

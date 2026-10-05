@@ -197,6 +197,8 @@ class CatalogTest : public testing::Test {
   googlesql::EnumerableCatalog& change_stream_internal_query_catalog() {
     return *change_stream_internal_query_catalog_;
   }
+  googlesql::TypeFactory* type_factory() { return &type_factory_; }
+  FunctionCatalog* function_catalog() { return function_catalog_.get(); }
 
  private:
   googlesql::TypeFactory type_factory_;
@@ -215,6 +217,56 @@ TEST_F(CatalogTest, FindTableTableIsFound) {
   const googlesql::Table* table;
   GOOGLESQL_EXPECT_OK(catalog().FindTable({"test_table"}, &table, {}));
   EXPECT_EQ(table->FullName(), "test_table");
+}
+
+TEST_F(CatalogTest, LazyColumnExpressionsMatchEagerAnalysis) {
+  std::unique_ptr<const Schema> schema =
+      test::CreateSimpleDefaultKeySchema(type_factory());
+  const googlesql::AnalyzerOptions options =
+      MakeGoogleSqlAnalyzerOptions(kDefaultTimeZone);
+
+  Catalog eager_catalog(schema.get(), function_catalog(), type_factory(),
+                        options);
+  Catalog lazy_catalog(schema.get(), function_catalog(), type_factory(),
+                       options, /*reader=*/nullptr, /*query_evaluator=*/nullptr,
+                       /*change_stream_internal_lookup=*/std::nullopt,
+                       /*secure_context=*/{},
+                       /*lazy_column_expressions=*/true);
+
+  const googlesql::Table* eager_table;
+  GOOGLESQL_ASSERT_OK(eager_catalog.FindTable({"players_default_key"}, &eager_table));
+  const googlesql::Table* lazy_table;
+  GOOGLESQL_ASSERT_OK(lazy_catalog.FindTable({"players_default_key"}, &lazy_table));
+  ASSERT_EQ(eager_table->NumColumns(), lazy_table->NumColumns());
+
+  for (int i = 0; i < eager_table->NumColumns(); ++i) {
+    const googlesql::Column* eager_column = eager_table->GetColumn(i);
+    const googlesql::Column* lazy_column = lazy_table->GetColumn(i);
+    EXPECT_EQ(eager_column->Name(), lazy_column->Name());
+    auto eager_expression = eager_column->GetExpression();
+    auto lazy_expression = lazy_column->GetExpression();
+    ASSERT_EQ(eager_expression.has_value(), lazy_expression.has_value())
+        << eager_column->Name();
+    if (!eager_expression.has_value()) {
+      continue;
+    }
+    EXPECT_EQ(eager_expression->GetExpressionKind(),
+              lazy_expression->GetExpressionKind());
+    EXPECT_EQ(eager_expression->GetExpressionString(),
+              lazy_expression->GetExpressionString());
+    ASSERT_NE(lazy_expression->GetResolvedExpression(), nullptr);
+    EXPECT_EQ(eager_expression->GetResolvedExpression()->DebugString(),
+              lazy_expression->GetResolvedExpression()->DebugString());
+    // The same analysis result is returned on every call.
+    EXPECT_EQ(lazy_column->GetExpression()->GetResolvedExpression(),
+              lazy_expression->GetResolvedExpression());
+  }
+  // Columns without an expression have none in either mode.
+  EXPECT_FALSE(lazy_table->FindColumnByName("player_id")
+                   ->GetExpression()
+                   .has_value());
+  EXPECT_TRUE(
+      lazy_table->FindColumnByName("balance")->GetExpression().has_value());
 }
 
 TEST_F(CatalogTest, FindTableTableIsNotFound) {

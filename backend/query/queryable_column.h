@@ -22,9 +22,12 @@
 #include <string>
 #include <utility>
 
+#include "googlesql/public/analyzer_options.h"
 #include "googlesql/public/analyzer_output.h"
 #include "googlesql/public/catalog.h"
 #include "googlesql/public/type.h"
+#include "googlesql/public/types/type_factory.h"
+#include "absl/base/call_once.h"
 #include "absl/strings/str_cat.h"
 #include "backend/schema/catalog/column.h"
 
@@ -33,15 +36,14 @@ namespace spanner {
 namespace emulator {
 namespace backend {
 
-// QueryableColumn is a thin wrapper over backend::Column class which implements
-// the googlesql::Column interface. The intent is to have a cleaner separation
-// of interfaces between backend/catalog and backend/query and remove any
-// GoogleSQL dependencies from the former.
+// A wrapper over backend::Column class which implements googlesql::Column.
 class QueryableColumn : public googlesql::Column {
  public:
+  // A column without a default or generated expression.
   explicit QueryableColumn(const backend::Column* column)
       : wrapped_column_(column) {}
 
+  // A column whose default or generated expression has already been analyzed.
   QueryableColumn(const backend::Column* column,
                   std::unique_ptr<const googlesql::AnalyzerOutput> output,
                   std::optional<const googlesql::Column::ExpressionAttributes>
@@ -49,6 +51,24 @@ class QueryableColumn : public googlesql::Column {
       : wrapped_column_(column),
         output_(std::move(output)),
         column_expression_(expression_attributes) {}
+
+  // A column whose default or generated expression is analyzed on the first
+  // call to GetExpression(), against 'catalog' with 'options'. 'catalog' and
+  // 'type_factory' must outlive this column; 'options' is shared by all the
+  // columns of a table.
+  //
+  // Analyzing these expressions is the dominant cost of building a Catalog
+  // for a schema with many default or generated columns, and the analyzer
+  // only asks for them when resolving DML against the column's table. Deferring
+  // the analysis makes every other statement skip it entirely.
+  QueryableColumn(const backend::Column* column,
+                  std::shared_ptr<const googlesql::AnalyzerOptions> options,
+                  googlesql::Catalog* catalog,
+                  googlesql::TypeFactory* type_factory)
+      : wrapped_column_(column),
+        options_(std::move(options)),
+        catalog_(catalog),
+        type_factory_(type_factory) {}
 
   std::string Name() const override { return wrapped_column_->Name(); }
 
@@ -64,24 +84,35 @@ class QueryableColumn : public googlesql::Column {
 
   bool IsPseudoColumn() const override { return wrapped_column_->hidden(); }
 
-  // Returns optional ExpressionAttributes if a column has default or generated
-  // Expression.
   std::optional<const googlesql::Column::ExpressionAttributes> GetExpression()
       const override {
+    if (options_ != nullptr) {
+      absl::call_once(analyzed_once_, [this] { Analyze(); });
+    }
     return column_expression_;
   }
 
   const backend::Column* wrapped_column() const { return wrapped_column_; }
 
  private:
-  // The underlying schema column.
+  // Analyzes the column's default or generated expression and fills output_
+  // and column_expression_. Crashes on failure, as the eager construction
+  // path always did: expressions are validated when the schema is created,
+  // so a failure here is an emulator bug.
+  void Analyze() const;
+
   const backend::Column* wrapped_column_;
-  // The AnalyzerOutput that holds the column's ResolvedExpr, representing
-  // default value expression.
-  const std::unique_ptr<const googlesql::AnalyzerOutput> output_ = nullptr;
-  // Column Expression for generated or default columns.
-  std::optional<const googlesql::Column::ExpressionAttributes>
+
+  // Keeps the resolved expression referenced by column_expression_ alive.
+  mutable std::unique_ptr<const googlesql::AnalyzerOutput> output_ = nullptr;
+  mutable std::optional<const googlesql::Column::ExpressionAttributes>
       column_expression_;
+
+  // Set only for lazily analyzed columns.
+  mutable absl::once_flag analyzed_once_;
+  std::shared_ptr<const googlesql::AnalyzerOptions> options_ = nullptr;
+  googlesql::Catalog* catalog_ = nullptr;
+  googlesql::TypeFactory* type_factory_ = nullptr;
 };
 
 }  // namespace backend
