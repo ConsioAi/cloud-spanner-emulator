@@ -1374,7 +1374,12 @@ absl::StatusOr<QueryResult> QueryEngine::ExecuteSql(
                    MakeAnalyzerOptionsWithParameters(
                        normalized_query.declared_params,
                        GetTimeZone(function_catalog_.GetLatestSchema())));
-  analyzer_options.set_prune_unused_columns(true);
+  // DML must be analyzed without column pruning. Decide up front from the
+  // statement kind of the raw SQL so that DML is analyzed once; if the cheap
+  // classification is wrong (see below), the statement is re-analyzed as it
+  // always was.
+  const bool expect_dml = IsDMLQuery(normalized_query.sql);
+  analyzer_options.set_prune_unused_columns(!expect_dml);
 
   QueryEvaluatorForEngine view_evaluator(*this, context,
                                          normalized_query.secure_context);
@@ -1440,21 +1445,27 @@ absl::StatusOr<QueryResult> QueryEngine::ExecuteSql(
     result.rows = std::move(cursor);
   } else {
     GOOGLESQL_RET_CHECK_NE(context.writer, nullptr);
-    analyzer_options.set_prune_unused_columns(false);
-    if (context.schema->dialect() ==
-        database_api::DatabaseDialect::POSTGRESQL) {
-      GOOGLESQL_ASSIGN_OR_RETURN(analyzer_output,
-                       AnalyzePostgreSQL(normalized_query.sql, catalog.get(),
-                                         analyzer_options, type_factory_,
-                                         &function_catalog_));
-    } else {
-      GOOGLESQL_ASSIGN_OR_RETURN(analyzer_output,
-                       Analyze(normalized_query.sql, catalog.get(),
-                               analyzer_options, type_factory_));
+    if (analyzer_options.prune_unused_columns()) {
+      // The statement kind of the raw SQL did not identify this as DML (for
+      // example because of a leading comment), so it was analyzed with column
+      // pruning. Analyze it again without.
+      analyzer_options.set_prune_unused_columns(false);
+      if (context.schema->dialect() ==
+          database_api::DatabaseDialect::POSTGRESQL) {
+        GOOGLESQL_ASSIGN_OR_RETURN(
+            analyzer_output,
+            AnalyzePostgreSQL(normalized_query.sql, catalog.get(),
+                              analyzer_options, type_factory_,
+                              &function_catalog_));
+      } else {
+        GOOGLESQL_ASSIGN_OR_RETURN(analyzer_output,
+                         Analyze(normalized_query.sql, catalog.get(),
+                                 analyzer_options, type_factory_));
+      }
+      GOOGLESQL_ASSIGN_OR_RETURN(resolved_statement,
+                       ExtractValidatedResolvedStatementAndOptions(
+                           analyzer_output.get(), context, catalog.get()));
     }
-    GOOGLESQL_ASSIGN_OR_RETURN(resolved_statement,
-                     ExtractValidatedResolvedStatementAndOptions(
-                         analyzer_output.get(), context, catalog.get()));
 
     // Only execute the SQL statement if the user did not request PLAN mode.
     if (query_mode != v1::ExecuteSqlRequest::PLAN) {

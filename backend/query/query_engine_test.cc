@@ -1610,6 +1610,39 @@ TEST_P(QueryEngineTest, ExecuteInsertsTwoRows) {
   EXPECT_EQ(result.modified_row_count, 2);
 }
 
+TEST_P(QueryEngineTest, ExecuteInsertWithLeadingCommentAndWhitespace) {
+  // DML is classified from the raw SQL before analysis so that it is analyzed
+  // once. Statements that the cheap classification may not recognize must
+  // still execute correctly through the fallback re-analysis.
+  for (const std::string& prefix :
+       {std::string("/* leading comment */ "), std::string("\n\n  "),
+        std::string("-- line comment\n")}) {
+    MockRowWriter writer;
+    EXPECT_CALL(
+        writer,
+        Write(Property(
+            &Mutation::ops,
+            UnorderedElementsAre(AllOf(
+                Field(&MutationOp::type, MutationOpType::kInsert),
+                Field(&MutationOp::table, "test_table"),
+                Field(&MutationOp::columns,
+                      std::vector<std::string>{"int64_col", "string_col"}),
+                Field(&MutationOp::rows,
+                      UnorderedElementsAre(
+                          ValueList{Int64(7), String("seven")})))))))
+        .Times(1)
+        .WillOnce(Return(absl::OkStatus()));
+    GOOGLESQL_ASSERT_OK_AND_ASSIGN(
+        QueryResult result,
+        query_engine().ExecuteSql(
+            Query{prefix + "INSERT INTO test_table (int64_col, string_col) "
+                           "VALUES(7, 'seven')"},
+            QueryContext{schema(), reader(), &writer}));
+    EXPECT_EQ(result.rows, nullptr);
+    EXPECT_EQ(result.modified_row_count, 1);
+  }
+}
+
 TEST_P(QueryEngineTest, ExecuteInsertsTwoRowsIntoSequenceTable) {
   std::string returning =
       (GetParam() == POSTGRESQL) ? "RETURNING" : "THEN RETURN";
